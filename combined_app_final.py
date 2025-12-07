@@ -24,11 +24,18 @@ except ImportError:
     print("⚠️ 建议安装 pynput: pip install pynput")
     mouse = None
 
+# 配置文件路径
+FLASK_CONFIG_FILE = "poe2_auto_config_v73.json"
+EQUIPMENT_CONFIG_FILE = "config_turbo.json"
+
 class CombinedApp:
     def __init__(self, root):
         self.root = root
         self.root.title("多功能工具集成")
         self.root.geometry("900x700")
+
+        # 添加窗口关闭事件处理
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
         # 创建主框架和选项卡
         self.main_frame = ttk.Frame(root)
@@ -37,39 +44,109 @@ class CombinedApp:
         self.notebook = ttk.Notebook(self.main_frame)
         self.notebook.pack(fill=tk.BOTH, expand=True)
 
+        # 初始化flask相关变量
+        self.init_flask_vars()
+
+        # 初始化equipment相关变量
+        self.init_equipment_vars()
+
         # 创建各个功能选项卡
         self.create_flask_tab()
         self.create_equipment_tab()
 
-    def create_flask_tab(self):
-        """创建flask功能选项卡"""
-        self.flask_tab = ttk.Frame(self.notebook)
-        self.notebook.add(self.flask_tab, text="自动喝药")
+    def init_flask_vars(self):
+        """初始化flask相关的变量"""
+        # 加载配置
+        config = {}
+        if os.path.exists(FLASK_CONFIG_FILE):
+            try:
+                with open(FLASK_CONFIG_FILE, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+            except Exception as e:
+                print(f"⚠️ Flask配置加载失败: {e}")
 
-        # 初始化flask相关的变量
-        self.hp_key = tk.StringVar(value="1")
-        self.hp_threshold = tk.DoubleVar(value=35.0)
-        self.disable_hp = tk.BooleanVar(value=False)
-        self.enable_hp_timer = tk.BooleanVar(value=False)
-        self.hp_timer_interval = tk.DoubleVar(value=5.0)
+        # HP 设置
+        self.hp_key = tk.StringVar(value=config.get("hp_key", "1"))
+        self.hp_threshold = tk.DoubleVar(value=float(config.get("hp_threshold", 35.0)))
+        self.disable_hp = tk.BooleanVar(value=config.get("disable_hp", False))
+        self.enable_hp_timer = tk.BooleanVar(value=config.get("enable_hp_timer", False))
+        self.hp_timer_interval = tk.DoubleVar(value=float(config.get("hp_timer_interval", 5.0)))
         self.last_hp_timer = 0
 
-        self.mp_key = tk.StringVar(value="2")
-        self.mp_threshold = tk.DoubleVar(value=35.0)
-        self.disable_mp = tk.BooleanVar(value=False)
-        self.enable_mp_timer = tk.BooleanVar(value=False)
-        self.mp_timer_interval = tk.DoubleVar(value=8.0)
+        # MP 设置
+        self.mp_key = tk.StringVar(value=config.get("mp_key", "2"))
+        self.mp_threshold = tk.DoubleVar(value=float(config.get("mp_threshold", 35.0)))
+        self.disable_mp = tk.BooleanVar(value=config.get("disable_mp", False))
+        self.enable_mp_timer = tk.BooleanVar(value=config.get("enable_mp_timer", False))
+        self.mp_timer_interval = tk.DoubleVar(value=float(config.get("mp_timer_interval", 8.0)))
         self.last_mp_timer = 0
 
-        self.check_interval = tk.DoubleVar(value=0.3)
+        # 全局设置
+        self.check_interval = tk.DoubleVar(value=float(config.get("check_interval", 0.3)))
         self.is_monitoring = False
         self.monitor_thread = None
 
         self.current_hp = tk.StringVar(value="--%")
         self.current_mp = tk.StringVar(value="--%")
 
-        self.hp_region = None
-        self.mp_region = None
+        # 手动区域（直接存储为 (x, y, w, h)）
+        hp_region_data = config.get("hp_region", None)
+        if hp_region_data and isinstance(hp_region_data, list) and len(hp_region_data) == 4:
+            self.hp_region = tuple(hp_region_data)
+        else:
+            self.hp_region = None
+
+        mp_region_data = config.get("mp_region", None)
+        if mp_region_data and isinstance(mp_region_data, list) and len(mp_region_data) == 4:
+            self.mp_region = tuple(mp_region_data)
+        else:
+            self.mp_region = None
+
+    def init_equipment_vars(self):
+        """初始化equipment相关的变量"""
+        # 加载配置
+        config = {}
+        if os.path.exists(EQUIPMENT_CONFIG_FILE):
+            try:
+                with open(EQUIPMENT_CONFIG_FILE, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+            except Exception as e:
+                print(f"⚠️ 配置加载失败: {e}")
+                
+        # 加载模板路径
+        self.main_template_paths = config.get("main_template_paths", [])
+        self.tier_template_path = config.get("tier_template_path", None)
+
+        self.orb_pos = tk.StringVar(value=config.get("orb_pos", "(?, ?)"))
+        self.equip_pos = tk.StringVar(value=config.get("equip_pos", "(?, ?)"))
+        self.mod_region = tk.StringVar(value=config.get("mod_region", "(?, ?, ?, ?)"))
+        self.main_threshold = tk.DoubleVar(value=float(config.get("main_threshold", 0.85)))
+        self.tier_threshold = tk.DoubleVar(value=float(config.get("tier_threshold", 0.90)))
+        self.max_attempts = tk.IntVar(value=int(config.get("max_attempts", 200)))
+
+        self.delay_vars = {
+            "orb_delay": tk.DoubleVar(value=float(config.get("orb_delay", 0.25))),
+            "equip_click_delay": tk.DoubleVar(value=float(config.get("equip_click_delay", 0.75))),
+            "alt_screenshot_delay": tk.DoubleVar(value=float(config.get("alt_screenshot_delay", 0.0))),
+            "loop_random_max": tk.DoubleVar(value=float(config.get("loop_random_max", 0.02))),
+        }
+
+        # weizhi相关变量
+        self.screenshot_path = None
+        self.template_main_path = None      # 主词条模板
+        self.template_tier_path = None      # T阶图标模板（如 t1.png）
+        self.screenshot_img = None          # 原始 BGR
+        self.template_main_img = None       # 原始 BGR
+        self.template_tier_img = None       # 原始 BGR
+
+        # 阈值变量
+        self.weizhi_main_thresh = tk.DoubleVar(value=0.85)
+        self.weizhi_tier_thresh = tk.DoubleVar(value=0.90)
+
+    def create_flask_tab(self):
+        """创建flask功能选项卡"""
+        self.flask_tab = ttk.Frame(self.notebook)
+        self.notebook.add(self.flask_tab, text="自动喝药")
 
         # 创建flask界面
         flask_frame = ttk.Frame(self.flask_tab, padding="10")
@@ -82,11 +159,19 @@ class CombinedApp:
         self.hp_region_label = ttk.Label(btn_frame1, text="未设置", foreground="red")
         self.hp_region_label.pack(side=tk.LEFT, padx=10)
 
+        # 如果已加载血条区域，更新标签
+        if self.hp_region:
+            self.hp_region_label.config(text=f"({self.hp_region[0]},{self.hp_region[1]}) {self.hp_region[2]}x{self.hp_region[3]}")
+
         btn_frame2 = ttk.Frame(flask_frame)
         btn_frame2.pack(fill=tk.X, pady=5)
         ttk.Button(btn_frame2, text="💧 手动选蓝条（请框选一个竖条区域）", command=self.select_mp_region).pack(side=tk.LEFT)
         self.mp_region_label = ttk.Label(btn_frame2, text="未设置", foreground="blue")
         self.mp_region_label.pack(side=tk.LEFT, padx=10)
+
+        # 如果已加载蓝条区域，更新标签
+        if self.mp_region:
+            self.mp_region_label.config(text=f"({self.mp_region[0]},{self.mp_region[1]}) {self.mp_region[2]}x{self.mp_region[3]}")
 
         # 实时百分比显示
         pct_frame = ttk.Frame(flask_frame)
@@ -133,26 +218,10 @@ class CombinedApp:
         self.log_text = scrolledtext.ScrolledText(log_frame, height=8, state=tk.DISABLED, wrap=tk.WORD)
         self.log_text.pack(fill=tk.BOTH, expand=True)
 
-        self.log("✅ PoE2 自动喝药 v7.3 启动（纯手动竖条识别，精准支持 0%~100%）")
-
-    def create_potion_ui(self, parent, key_var, thresh_var, disable_var, timer_var, timer_interval_var):
-        row1 = ttk.Frame(parent)
-        row1.pack(fill=tk.X, pady=2)
-        ttk.Label(row1, text="按键:").pack(side=tk.LEFT)
-        ttk.Entry(row1, textvariable=key_var, width=6).pack(side=tk.LEFT, padx=5)
-        ttk.Label(row1, text="阈值(%):").pack(side=tk.LEFT, padx=(10, 0))
-        ttk.Spinbox(row1, from_=1, to=100, textvariable=thresh_var, width=6).pack(side=tk.LEFT, padx=5)
-
-        row2 = ttk.Frame(parent)
-        row2.pack(fill=tk.X, pady=2)
-        ttk.Checkbutton(row2, text="🚫 禁止喝此药", variable=disable_var).pack(side=tk.LEFT)
-        ttk.Checkbutton(row2, text="⏱️ 定时喝药", variable=timer_var).pack(side=tk.LEFT, padx=(20, 0))
-        ttk.Label(row2, text="每").pack(side=tk.LEFT, padx=(10, 0))
-        ttk.Spinbox(row2, from_=1, to=60, increment=0.5, textvariable=timer_interval_var, width=6).pack(side=tk.LEFT, padx=5)
-        ttk.Label(row2, text="秒").pack(side=tk.LEFT)
+        self.log("✅ PoE2 自动喝药 v7.3 启动（自动支持红/绿血条）")
 
     def create_equipment_tab(self):
-        """创建cEquipment功能选项卡"""
+        """创建equipment功能选项卡"""
         self.equipment_tab = ttk.Frame(self.notebook)
         self.notebook.add(self.equipment_tab, text="装备洗练")
 
@@ -170,24 +239,6 @@ class CombinedApp:
         self.turbo_tab = ttk.Frame(self.equipment_notebook)
         self.equipment_notebook.add(self.turbo_tab, text="极速洗练")
 
-        # 初始化cEquipment相关的变量
-        self.main_template_paths = []
-        self.tier_template_path = None
-
-        self.orb_pos = tk.StringVar(value="(?, ?)")
-        self.equip_pos = tk.StringVar(value="(?, ?)")
-        self.mod_region = tk.StringVar(value="(?, ?, ?, ?)")
-        self.main_threshold = tk.DoubleVar(value=0.85)
-        self.tier_threshold = tk.DoubleVar(value=0.90)
-        self.max_attempts = tk.IntVar(value=200)
-
-        self.delay_vars = {
-            "orb_delay": tk.DoubleVar(value=0.25),
-            "equip_click_delay": tk.DoubleVar(value=0.75),
-            "alt_screenshot_delay": tk.DoubleVar(value=0.0),
-            "loop_random_max": tk.DoubleVar(value=0.02),
-        }
-
         # 创建cEquipment界面
         frame = ttk.Frame(self.turbo_tab, padding="12")
         frame.grid(row=0, column=0, sticky=(tk.W, tk.E))
@@ -203,6 +254,11 @@ class CombinedApp:
         ttk.Label(frame, text="主词条模板 (PNG):").grid(row=3, column=0, sticky=tk.W, pady=(10,5))
         self.listbox_main = tk.Listbox(frame, height=4, width=65)
         self.listbox_main.grid(row=4, column=0, columnspan=3, pady=5)
+        
+        # 加载已保存的主词条模板
+        for path in self.main_template_paths:
+            self.listbox_main.insert(tk.END, path)
+            
         btn_f1 = ttk.Frame(frame)
         btn_f1.grid(row=5, column=0, columnspan=3, pady=5, sticky=tk.W)
         ttk.Button(btn_f1, text="添加", command=self.add_main_template).pack(side=tk.LEFT, padx=5)
@@ -212,6 +268,14 @@ class CombinedApp:
         ttk.Label(frame, text="T阶图标模板 (PNG):").grid(row=6, column=0, sticky=tk.W, pady=(10,5))
         self.tier_entry = ttk.Entry(frame, width=50, state='readonly')
         self.tier_entry.grid(row=7, column=0, columnspan=2, padx=5, pady=5)
+        
+        # 加载已保存的T阶模板
+        if self.tier_template_path:
+            self.tier_entry.config(state='normal')
+            self.tier_entry.delete(0, tk.END)
+            self.tier_entry.insert(0, self.tier_template_path)
+            self.tier_entry.config(state='readonly')
+            
         ttk.Button(frame, text="选择", command=self.select_tier_template).grid(row=7, column=2)
 
         # 阈值
@@ -253,19 +317,6 @@ class CombinedApp:
         self.weizhi_tab = ttk.Frame(self.equipment_notebook)
         self.equipment_notebook.add(self.weizhi_tab, text="匹配测试")
 
-        # 初始化weizhi相关的变量
-        self.screenshot_path = None
-        self.template_main_path = None      # 主词条模板
-        self.template_tier_path = None      # T阶图标模板（如 t1.png）
-        self.screenshot_img = None          # 原始 BGR
-        self.template_main_img = None       # 原始 BGR
-        self.template_tier_img = None       # 原始 BGR
-
-        # 阈值变量
-        self.main_thresh = tk.DoubleVar(value=0.85)
-        self.tier_thresh = tk.DoubleVar(value=0.90)
-
-        # 创建weizhi界面
         # === 控制区 ===
         control_frame = ttk.Frame(self.weizhi_tab, padding="10")
         control_frame.pack(side=tk.TOP, fill=tk.X)
@@ -275,12 +326,12 @@ class CombinedApp:
         ttk.Button(control_frame, text="选择T阶图标模板", command=self.load_template_tier).pack(side=tk.LEFT, padx=5)
 
         ttk.Label(control_frame, text="主词条阈值:").pack(side=tk.LEFT, padx=(20,5))
-        ttk.Scale(control_frame, from_=0.7, to=0.98, variable=self.main_thresh, orient=tk.HORIZONTAL, length=120).pack(side=tk.LEFT)
-        ttk.Label(control_frame, textvariable=self.main_thresh, width=5).pack(side=tk.LEFT, padx=(5,15))
+        ttk.Scale(control_frame, from_=0.7, to=0.98, variable=self.weizhi_main_thresh, orient=tk.HORIZONTAL, length=120).pack(side=tk.LEFT)
+        ttk.Label(control_frame, textvariable=self.weizhi_main_thresh, width=5).pack(side=tk.LEFT, padx=(5,15))
 
         ttk.Label(control_frame, text="T阶图标阈值:").pack(side=tk.LEFT)
-        ttk.Scale(control_frame, from_=0.8, to=0.99, variable=self.tier_thresh, orient=tk.HORIZONTAL, length=120).pack(side=tk.LEFT)
-        ttk.Label(control_frame, textvariable=self.tier_thresh, width=5).pack(side=tk.LEFT, padx=(5,15))
+        ttk.Scale(control_frame, from_=0.8, to=0.99, variable=self.weizhi_tier_thresh, orient=tk.HORIZONTAL, length=120).pack(side=tk.LEFT)
+        ttk.Label(control_frame, textvariable=self.weizhi_tier_thresh, width=5).pack(side=tk.LEFT, padx=(5,15))
 
         ttk.Button(control_frame, text="🔍 开始匹配", command=self.run_matching).pack(side=tk.LEFT, padx=(20,0))
 
@@ -316,7 +367,24 @@ class CombinedApp:
         self.canvas_result.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
     # === Flask功能相关方法 ===
+    def create_potion_ui(self, parent, key_var, thresh_var, disable_var, timer_var, timer_interval_var):
+        row1 = ttk.Frame(parent)
+        row1.pack(fill=tk.X, pady=2)
+        ttk.Label(row1, text="按键:").pack(side=tk.LEFT)
+        ttk.Entry(row1, textvariable=key_var, width=6).pack(side=tk.LEFT, padx=5)
+        ttk.Label(row1, text="阈值(%):").pack(side=tk.LEFT, padx=(10, 0))
+        ttk.Spinbox(row1, from_=1, to=100, textvariable=thresh_var, width=6).pack(side=tk.LEFT, padx=5)
+
+        row2 = ttk.Frame(parent)
+        row2.pack(fill=tk.X, pady=2)
+        ttk.Checkbutton(row2, text="🚫 禁止喝此药", variable=disable_var).pack(side=tk.LEFT)
+        ttk.Checkbutton(row2, text="⏱️ 定时喝药", variable=timer_var).pack(side=tk.LEFT, padx=(20, 0))
+        ttk.Label(row2, text="每").pack(side=tk.LEFT, padx=(10, 0))
+        ttk.Spinbox(row2, from_=1, to=60, increment=0.5, textvariable=timer_interval_var, width=6).pack(side=tk.LEFT, padx=5)
+        ttk.Label(row2, text="秒").pack(side=tk.LEFT)
+
     def log(self, msg):
+        """添加日志消息"""
         if hasattr(self, 'log_text') and self.log_text.winfo_exists():
             self.log_text.config(state=tk.NORMAL)
             self.log_text.insert(tk.END, f"[{time.strftime('%H:%M:%S')}] {msg}\n")
@@ -324,6 +392,7 @@ class CombinedApp:
             self.log_text.config(state=tk.DISABLED)
 
     def select_region_tk(self, title="选择区域"):
+        """选择屏幕区域"""
         try:
             screen_img = ImageGrab.grab()
             w, h = screen_img.size
@@ -356,7 +425,7 @@ class CombinedApp:
                 x1, y1 = min(start_x, end_x), min(start_y, end_y)
                 x2, y2 = max(start_x, end_x), max(start_y, end_y)
                 selector.destroy()
-                if x2 - x1 > 5 and y2 - y1 > 10:  # 至少高一点
+                if x2 - x1 > 5 and y2 - y1 > 10:
                     self.selected_region = (x1, y1, x2 - x1, y2 - y1)
                 else:
                     self.selected_region = None
@@ -372,6 +441,7 @@ class CombinedApp:
             return None
 
     def select_hp_region(self):
+        """选择血条区域"""
         r = self.select_region_tk("请选择血条的竖条区域（窄而高）")
         if r:
             self.hp_region = r
@@ -379,15 +449,16 @@ class CombinedApp:
             self.log("✅ 血条区域已设")
 
     def select_mp_region(self):
+        """选择蓝条区域"""
         r = self.select_region_tk("请选择蓝条的竖条区域（窄而高）")
         if r:
             self.mp_region = r
             self.mp_region_label.config(text=f"({r[0]},{r[1]}) {r[2]}x{r[3]}")
             self.log("✅ 蓝条区域已设")
 
-    def calculate_percentage_from_strip(self, img, color='red'):
+    def calculate_percentage_from_strip(self, img):
         """
-        适用于 PoE2：资源条从底部向上填充（0% = 无色，100% = 全满）
+        自动检测红色或绿色血条，返回最高填充百分比。
         img: RGB 格式的 numpy 数组 (H, W, 3)
         """
         if img.size == 0 or img.shape[0] < 10 or img.shape[1] < 3:
@@ -395,69 +466,83 @@ class CombinedApp:
 
         hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
 
-        if color == 'red':
-            # 宽松红：覆盖 PoE2 暗红、亮红
-            lower1 = np.array([0, 70, 60])
-            upper1 = np.array([20, 255, 255])
-            lower2 = np.array([160, 70, 60])
-            upper2 = np.array([180, 255, 255])
-            mask = cv2.bitwise_or(
-                cv2.inRange(hsv, lower1, upper1),
-                cv2.inRange(hsv, lower2, upper2)
-            )
-        else:  # blue
-            lower = np.array([90, 70, 60])
-            upper = np.array([140, 255, 255])
-            mask = cv2.inRange(hsv, lower, upper)
+        # 红色掩码
+        lower_red1 = np.array([0, 70, 60])
+        upper_red1 = np.array([20, 255, 255])
+        lower_red2 = np.array([160, 70, 60])
+        upper_red2 = np.array([180, 255, 255])
+        mask_red = cv2.bitwise_or(
+            cv2.inRange(hsv, lower_red1, upper_red1),
+            cv2.inRange(hsv, lower_red2, upper_red2)
+        )
 
-        # 去噪（可选，避免闪烁）
+        # 绿色掩码
+        lower_green = np.array([40, 70, 60])
+        upper_green = np.array([80, 255, 255])
+        mask_green = cv2.inRange(hsv, lower_green, upper_green)
+
+        # 合并掩码（用于去噪）
+        combined_mask = cv2.bitwise_or(mask_red, mask_green)
+
         kernel = np.ones((2, 2), np.uint8)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+        combined_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_CLOSE, kernel)
+        combined_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_OPEN, kernel)
 
-        h, w = mask.shape
-        colored_rows = np.where(np.any(mask > 0, axis=1))[0]
+        h, w = combined_mask.shape
+        colored_rows = np.where(np.any(combined_mask > 0, axis=1))[0]
 
         if len(colored_rows) == 0:
             return 0.0
 
-        # ✅ 关键修正：找最顶部的有色行（最小 y）
-        top_most_colored_row = np.min(colored_rows)  # y 值最小，位置最高
-        filled_height = h - top_most_colored_row  # 从该行到底部的高度
+        top_most_colored_row = np.min(colored_rows)
+        filled_height = h - top_most_colored_row
         percentage = (filled_height / h) * 100
-
         return max(0.0, min(100.0, percentage))
 
-    def is_valid_bar(self, img, color='red'):
-        """
-        判断给定的图像是否包含足够的有效颜色区域
-        :param img: 输入的RGB图像
-        :param color: 需要判断的颜色类型 ('red' 或 'blue')
-        :return: True 表示有效；False 表示无效
-        """
+    def is_valid_bar(self, img):
+        """判断图像是否包含有效的红或绿血条"""
         hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
 
-        if color == 'red':
-            lower1 = np.array([0, 50, 40])
-            upper1 = np.array([25, 255, 255])
-            lower2 = np.array([150, 50, 40])
-            upper2 = np.array([180, 255, 255])
-            mask = cv2.bitwise_or(
-                cv2.inRange(hsv, lower1, upper1),
-                cv2.inRange(hsv, lower2, upper2)
-            )
-        else:  # blue
-            lower = np.array([80, 50, 40])
-            upper = np.array([150, 255, 255])
-            mask = cv2.inRange(hsv, lower, upper)
+        mask_red1 = cv2.inRange(hsv, np.array([0, 50, 40]), np.array([25, 255, 255]))
+        mask_red2 = cv2.inRange(hsv, np.array([150, 50, 40]), np.array([180, 255, 255]))
+        mask_red = cv2.bitwise_or(mask_red1, mask_red2)
 
-        total_pixels = mask.size
-        colored_pixels = cv2.countNonZero(mask)
+        mask_green = cv2.inRange(hsv, np.array([40, 50, 40]), np.array([80, 255, 255]))
 
-        # 如果有效颜色像素占比低于一定比例（如10%），则认为不是有效的血条/蓝条区域
-        return (colored_pixels / total_pixels) > 0.1
+        combined = cv2.bitwise_or(mask_red, mask_green)
+        total = combined.size
+        colored = cv2.countNonZero(combined)
+        return (colored / total) > 0.1
+
+    def calculate_percentage_from_strip_blue(self, img):
+        """计算蓝条百分比"""
+        if img.size == 0 or img.shape[0] < 10 or img.shape[1] < 3:
+            return None
+        hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
+        lower = np.array([90, 70, 60])
+        upper = np.array([140, 255, 255])
+        mask = cv2.inRange(hsv, lower, upper)
+        kernel = np.ones((2, 2), np.uint8)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+        h, w = mask.shape
+        colored_rows = np.where(np.any(mask > 0, axis=1))[0]
+        if len(colored_rows) == 0:
+            return 0.0
+        top_most = np.min(colored_rows)
+        filled = h - top_most
+        return max(0.0, min(100.0, (filled / h) * 100))
+
+    def is_valid_bar_blue(self, img):
+        """判断蓝条是否有效"""
+        hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
+        mask = cv2.inRange(hsv, np.array([80, 50, 40]), np.array([150, 255, 255]))
+        total = mask.size
+        colored = cv2.countNonZero(mask)
+        return (colored / total) > 0.1
 
     def monitor_loop(self):
+        """监控循环"""
         while self.is_monitoring:
             try:
                 current_hp_val = None
@@ -466,52 +551,46 @@ class CombinedApp:
 
                 screen = np.array(ImageGrab.grab())
 
-                # HP
+                # HP（自动支持红/绿）
                 if self.hp_region:
                     x, y, w, h = self.hp_region
                     if x + w <= screen.shape[1] and y + h <= screen.shape[0]:
                         hp_img = screen[y:y + h, x:x + w]
-                        current_hp_val = self.calculate_percentage_from_strip(hp_img, 'red')
-
-                        # 增加前置检查
-                        if not self.is_valid_bar(hp_img, 'red'):
-                            self.current_hp.set("--%")
-                            current_hp_val = None  # 标记为无效状态
+                        if self.is_valid_bar(hp_img):
+                            current_hp_val = self.calculate_percentage_from_strip(hp_img)
+                            self.current_hp.set(f"{current_hp_val:.1f}%")
                         else:
-                            self.current_hp.set(f"{current_hp_val:.1f}%" if current_hp_val is not None else "??%")
+                            self.current_hp.set("--%")
+                            current_hp_val = None
                     else:
                         self.current_hp.set("--%")
                 else:
                     self.current_hp.set("--%")
 
-                # MP
+                # MP（仅蓝色）
                 if self.mp_region:
                     x, y, w, h = self.mp_region
                     if x + w <= screen.shape[1] and y + h <= screen.shape[0]:
                         mp_img = screen[y:y + h, x:x + w]
-                        current_mp_val = self.calculate_percentage_from_strip(mp_img, 'blue')
-
-                        # 增加前置检查
-                        if not self.is_valid_bar(mp_img, 'blue'):
-                            self.current_mp.set("--%")
-                            current_mp_val = None  # 标记为无效状态
+                        if self.is_valid_bar_blue(mp_img):
+                            current_mp_val = self.calculate_percentage_from_strip_blue(mp_img)
+                            self.current_mp.set(f"{current_mp_val:.1f}%")
                         else:
-                            self.current_mp.set(f"{current_mp_val:.1f}%" if current_mp_val is not None else "??%")
+                            self.current_mp.set("--%")
+                            current_mp_val = None
                     else:
                         self.current_mp.set("--%")
                 else:
                     self.current_mp.set("--%")
 
-                # 只有在识别到有效血条/蓝条时才进行喝药逻辑
-                if current_hp_val is not None:
-                    if not self.disable_hp.get() and current_hp_val < self.hp_threshold.get():
-                        pyautogui.press(self.hp_key.get())
-                        self.log(f"🩸 HP {current_hp_val:.1f}% → 按 '{self.hp_key.get()}'")
+                # 喝药逻辑
+                if current_hp_val is not None and not self.disable_hp.get() and current_hp_val < self.hp_threshold.get():
+                    pyautogui.press(self.hp_key.get())
+                    self.log(f"🩸 HP {current_hp_val:.1f}% → 按 '{self.hp_key.get()}'")
 
-                if current_mp_val is not None:
-                    if not self.disable_mp.get() and current_mp_val < self.mp_threshold.get():
-                        pyautogui.press(self.mp_key.get())
-                        self.log(f"💧 MP {current_mp_val:.1f}% → 按 '{self.mp_key.get()}'")
+                if current_mp_val is not None and not self.disable_mp.get() and current_mp_val < self.mp_threshold.get():
+                    pyautogui.press(self.mp_key.get())
+                    self.log(f"💧 MP {current_mp_val:.1f}% → 按 '{self.mp_key.get()}'")
 
                 # 定时喝药
                 if current_hp_val is not None and not self.disable_hp.get() and self.enable_hp_timer.get():
@@ -533,6 +612,7 @@ class CombinedApp:
                 time.sleep(1)
 
     def start_monitoring(self):
+        """开始监控"""
         if not self.hp_region and not self.mp_region:
             messagebox.showwarning("警告", "请先设置血条或蓝条区域！")
             return
@@ -544,6 +624,7 @@ class CombinedApp:
         self.monitor_thread.start()
 
     def stop_monitoring(self):
+        """停止监控"""
         self.is_monitoring = False
         self.start_btn.config(state=tk.NORMAL)
         self.stop_btn.config(state=tk.DISABLED)
@@ -552,6 +633,7 @@ class CombinedApp:
         self.log("⏹ 已停止")
 
     def get_config(self):
+        """获取配置"""
         return {
             "hp_region": self.hp_region,
             "mp_region": self.mp_region,
@@ -571,6 +653,7 @@ class CombinedApp:
         }
 
     def set_config(self, cfg):
+        """设置配置"""
         self.hp_region = cfg.get("hp_region")
         self.mp_region = cfg.get("mp_region")
         self.hp_key.set(cfg.get("hp_key", "1"))
@@ -596,6 +679,7 @@ class CombinedApp:
             self.mp_region_label.config(text=f"({x},{y}) {w}x{h}")
 
     def export_config(self):
+        """导出配置"""
         cfg = self.get_config()
         file_path = filedialog.asksaveasfilename(
             defaultextension=".json",
@@ -608,6 +692,7 @@ class CombinedApp:
             self.log(f"💾 配置已导出: {os.path.basename(file_path)}")
 
     def import_config(self):
+        """导入配置"""
         file_path = filedialog.askopenfilename(filetypes=[("JSON files", "*.json")])
         if file_path and os.path.exists(file_path):
             try:
@@ -620,6 +705,7 @@ class CombinedApp:
 
     # === cEquipment功能相关方法 ===
     def pick_coordinate(self, target_type):
+        """拾取坐标"""
         if target_type == "mod":
             region = self.select_region_by_drag(self.root)
             self.mod_region.set(f"({region[0]}, {region[1]}, {region[2]}, {region[3]})")
@@ -643,6 +729,7 @@ class CombinedApp:
         var.set(f"({x}, {y})")
 
     def select_region_by_drag(self, parent):
+        """拖选区域"""
         selector = tk.Toplevel(parent)
         selector.attributes('-fullscreen', True, '-topmost', True, '-alpha', 0.3)
         selector.overrideredirect(True)
@@ -691,6 +778,7 @@ class CombinedApp:
         return selected_region
 
     def add_main_template(self):
+        """添加主词条模板"""
         files = filedialog.askopenfilenames(filetypes=[("PNG", "*.png")])
         for f in files:
             if f not in self.main_template_paths:
@@ -698,12 +786,14 @@ class CombinedApp:
                 self.listbox_main.insert(tk.END, f)
 
     def remove_main_template(self):
+        """移除主词条模板"""
         sel = self.listbox_main.curselection()
         if sel:
             del self.main_template_paths[sel[0]]
             self.listbox_main.delete(sel[0])
 
     def select_tier_template(self):
+        """选择T阶模板"""
         file = filedialog.askopenfilename(filetypes=[("PNG", "*.png")])
         if file:
             self.tier_template_path = file
@@ -713,10 +803,12 @@ class CombinedApp:
             self.tier_entry.config(state='readonly')
 
     def parse_tuple(self, s):
+        """解析元组字符串"""
         parts = [int(x.strip()) for x in s.strip("() ").split(",") if x.strip()]
         return tuple(parts)
 
     def preprocess_image(self, img):
+        """预处理图像"""
         if len(img.shape) == 3:
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         else:
@@ -725,12 +817,14 @@ class CombinedApp:
         return binary
 
     def load_and_preprocess_template(self, path):
+        """加载并预处理模板"""
         template = cv2.imread(path, cv2.IMREAD_COLOR)
         if template is None:
             raise ValueError(f"无法加载模板: {path}")
         return self.preprocess_image(template)
 
     def match_main_and_get_template(self, screen_gray, templates_with_path, threshold, attempt_num):
+        """匹配主词条并获取最佳模板"""
         print(f"\n🔄 第 {attempt_num} 次洗练 - 主词条匹配:")
         best_score = -1
         best_template = None
@@ -757,6 +851,7 @@ class CombinedApp:
         return False, None, None, None, -1
 
     def start_reforge(self):
+        """开始洗练"""
         if not self.main_template_paths:
             messagebox.showwarning("错误", "请添加主词条模板！", parent=self.root)
             return
@@ -787,7 +882,6 @@ class CombinedApp:
             }
 
             # 保存配置
-            config_file = "config_turbo.json"
             config_to_save = {
                 "orb_pos": self.orb_pos.get(),
                 "equip_pos": self.equip_pos.get(),
@@ -800,7 +894,7 @@ class CombinedApp:
                 "tier_template_path": self.tier_template_path,
             }
             try:
-                with open(config_file, 'w', encoding='utf-8') as f:
+                with open(EQUIPMENT_CONFIG_FILE, 'w', encoding='utf-8') as f:
                     json.dump(config_to_save, f, indent=4)
             except Exception as e:
                 print(f"⚠️ 配置保存失败: {e}")
@@ -816,6 +910,7 @@ class CombinedApp:
                 print(f"\n❌ 启动失败: {e}")
 
     def run_reforge(self, config):
+        """运行洗练"""
         print("\n" + "="*70)
         print("⚡ 极速洗练启动（主词条 + 右侧T阶图标匹配 | 整行搜索）")
         print("🛑 按 F12 可随时中断洗练（返回主界面）")
@@ -917,6 +1012,7 @@ class CombinedApp:
 
     # === weizhi功能相关方法 ===
     def weizhi_log(self, msg):
+        """weizhi日志"""
         self.result_text.config(state='normal')
         self.result_text.insert(tk.END, msg + "\n")
         self.result_text.see(tk.END)
@@ -924,6 +1020,7 @@ class CombinedApp:
         print(msg)
 
     def load_screenshot(self):
+        """加载截图"""
         path = filedialog.askopenfilename(filetypes=[("Images", "*.png *.jpg *.jpeg")])
         if path:
             self.screenshot_path = path
@@ -932,6 +1029,7 @@ class CombinedApp:
             self.update_original_views()
 
     def load_template_main(self):
+        """加载主词条模板"""
         path = filedialog.askopenfilename(filetypes=[("Images", "*.png *.jpg *.jpeg")])
         if path:
             self.template_main_path = path
@@ -940,6 +1038,7 @@ class CombinedApp:
             self.update_original_views()
 
     def load_template_tier(self):
+        """加载T阶模板"""
         path = filedialog.askopenfilename(filetypes=[("Images", "*.png *.jpg *.jpeg")])
         if path:
             self.template_tier_path = path
@@ -948,6 +1047,7 @@ class CombinedApp:
             self.update_original_views()
 
     def update_original_views(self):
+        """更新原始视图"""
         if self.screenshot_img is not None:
             self.show_image_on_canvas(self.screenshot_img, self.canvas_orig_screen)
             proc_screen = self.preprocess_image(self.screenshot_img)
@@ -964,6 +1064,7 @@ class CombinedApp:
             self.show_image_on_canvas(proc_tier, self.canvas_proc_tier, max_h=40, is_gray=True)
 
     def show_image_on_canvas(self, img, canvas, max_h=None, is_gray=False):
+        """在画布上显示图像"""
         if img is None:
             return
         if is_gray:
@@ -988,6 +1089,7 @@ class CombinedApp:
         canvas.config(scrollregion=canvas.bbox(tk.ALL))
 
     def run_matching(self):
+        """运行匹配"""
         if self.screenshot_img is None or self.template_main_img is None or self.template_tier_img is None:
             messagebox.showwarning("警告", "请先加载截图、主词条模板和T阶图标模板！")
             return
@@ -1014,7 +1116,7 @@ class CombinedApp:
             x, y = max_loc
             self.weizhi_log(f"🎯 主词条匹配: 得分={max_val_main:.4f} @ ({x}, {y})")
 
-            if max_val_main < self.main_thresh.get():
+            if max_val_main < self.weizhi_main_thresh.get():
                 self.weizhi_log("❌ 主词条未达到阈值，匹配失败")
                 return
 
@@ -1045,8 +1147,8 @@ class CombinedApp:
                 self.weizhi_log(f"🔍 T阶图标匹配: 得分={max_val_tier:.4f} @ 全局({tier_global_x}, {tier_global_y})")
 
             # === 第3步：最终判定 ===
-            main_ok = max_val_main >= self.main_thresh.get()
-            tier_ok = max_val_tier >= self.tier_thresh.get()
+            main_ok = max_val_main >= self.weizhi_main_thresh.get()
+            tier_ok = max_val_tier >= self.weizhi_tier_thresh.get()
 
             # 可视化
             output = self.screenshot_img.copy()
@@ -1071,7 +1173,69 @@ class CombinedApp:
             self.weizhi_log(error_msg)
             messagebox.showerror("匹配出错", str(e))
 
+    def on_closing(self):
+        """处理窗口关闭事件，保存配置"""
+        try:
+            # 保存flask配置
+            flask_config = {
+                "hp_key": self.hp_key.get(),
+                "hp_threshold": self.hp_threshold.get(),
+                "disable_hp": self.disable_hp.get(),
+                "enable_hp_timer": self.enable_hp_timer.get(),
+                "hp_timer_interval": self.hp_timer_interval.get(),
+
+                "mp_key": self.mp_key.get(),
+                "mp_threshold": self.mp_threshold.get(),
+                "disable_mp": self.disable_mp.get(),
+                "enable_mp_timer": self.enable_mp_timer.get(),
+                "mp_timer_interval": self.mp_timer_interval.get(),
+
+                "check_interval": self.check_interval.get(),
+
+                "hp_region": list(self.hp_region) if self.hp_region else None,
+                "mp_region": list(self.mp_region) if self.mp_region else None
+            }
+
+            with open(FLASK_CONFIG_FILE, 'w', encoding='utf-8') as f:
+                json.dump(flask_config, f, ensure_ascii=False, indent=2)
+
+            print("✅ Flask配置已保存")
+        except Exception as e:
+            print(f"⚠️ Flask配置保存失败: {e}")
+            
+        try:
+            # 保存洗练配置
+            equipment_config = {
+                "orb_pos": self.orb_pos.get(),
+                "equip_pos": self.equip_pos.get(),
+                "mod_region": self.mod_region.get(),
+                "main_threshold": self.main_threshold.get(),
+                "tier_threshold": self.tier_threshold.get(),
+                "max_attempts": self.max_attempts.get(),
+                
+                # 延迟设置
+                "orb_delay": self.delay_vars["orb_delay"].get(),
+                "equip_click_delay": self.delay_vars["equip_click_delay"].get(),
+                "alt_screenshot_delay": self.delay_vars["alt_screenshot_delay"].get(),
+                "loop_random_max": self.delay_vars["loop_random_max"].get(),
+                
+                # 模板路径
+                "main_template_paths": self.main_template_paths,
+                "tier_template_path": self.tier_template_path
+            }
+            
+            with open(EQUIPMENT_CONFIG_FILE, 'w', encoding='utf-8') as f:
+                json.dump(equipment_config, f, ensure_ascii=False, indent=2)
+                
+            print("✅ 洗练配置已保存")
+        except Exception as e:
+            print(f"⚠️ 洗练配置保存失败: {e}")
+
+        # 关闭窗口
+        self.root.destroy()
+
     def run(self):
+        """运行应用"""
         self.root.mainloop()
 
 

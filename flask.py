@@ -15,7 +15,7 @@ CONFIG_FILE = "poe2_auto_config_v73.json"
 class Poe2AutoPotionV7_3:
     def __init__(self, root):
         self.root = root
-        self.root.title("🧪 PoE2 自动喝药 v7.3（纯手动竖条识别）")
+        self.root.title("🧪 PoE2 自动喝药 v7.3（支持红/绿血条）")
         self.root.geometry("640x1050")
         self.root.resizable(False, False)
 
@@ -112,7 +112,7 @@ class Poe2AutoPotionV7_3:
         self.log_text = scrolledtext.ScrolledText(log_frame, height=8, state=tk.DISABLED, wrap=tk.WORD)
         self.log_text.pack(fill=tk.BOTH, expand=True)
 
-        self.log("✅ PoE2 自动喝药 v7.3 启动（纯手动竖条识别，精准支持 0%~100%）")
+        self.log("✅ PoE2 自动喝药 v7.3 启动（自动支持红/绿血条）")
 
     def create_potion_ui(self, parent, key_var, thresh_var, disable_var, timer_var, timer_interval_var):
         row1 = ttk.Frame(parent)
@@ -137,7 +137,7 @@ class Poe2AutoPotionV7_3:
             self.log_text.see(tk.END)
             self.log_text.config(state=tk.DISABLED)
 
-    # ========== 手动选区（直接保存整个区域）==========
+    # ========== 手动选区 ==========
     def select_region_tk(self, title="选择区域"):
         try:
             screen_img = ImageGrab.grab()
@@ -171,7 +171,7 @@ class Poe2AutoPotionV7_3:
                 x1, y1 = min(start_x, end_x), min(start_y, end_y)
                 x2, y2 = max(start_x, end_x), max(start_y, end_y)
                 selector.destroy()
-                if x2 - x1 > 5 and y2 - y1 > 10:  # 至少高一点
+                if x2 - x1 > 5 and y2 - y1 > 10:
                     self.selected_region = (x1, y1, x2 - x1, y2 - y1)
                 else:
                     self.selected_region = None
@@ -200,10 +200,10 @@ class Poe2AutoPotionV7_3:
             self.mp_region_label.config(text=f"({r[0]},{r[1]}) {r[2]}x{r[3]}")
             self.log("✅ 蓝条区域已设")
 
-    # ========== 核心：直接在竖条区域计算百分比 ==========
-    def calculate_percentage_from_strip(self, img, color='red'):
+    # ========== 核心：支持红+绿血条 ==========
+    def calculate_percentage_from_strip(self, img):
         """
-        适用于 PoE2：资源条从底部向上填充（0% = 无色，100% = 全满）
+        自动检测红色或绿色血条，返回最高填充百分比。
         img: RGB 格式的 numpy 数组 (H, W, 3)
         """
         if img.size == 0 or img.shape[0] < 10 or img.shape[1] < 3:
@@ -211,38 +211,53 @@ class Poe2AutoPotionV7_3:
 
         hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
 
-        if color == 'red':
-            # 宽松红：覆盖 PoE2 暗红、亮红
-            lower1 = np.array([0, 70, 60])
-            upper1 = np.array([20, 255, 255])
-            lower2 = np.array([160, 70, 60])
-            upper2 = np.array([180, 255, 255])
-            mask = cv2.bitwise_or(
-                cv2.inRange(hsv, lower1, upper1),
-                cv2.inRange(hsv, lower2, upper2)
-            )
-        else:  # blue
-            lower = np.array([90, 70, 60])
-            upper = np.array([140, 255, 255])
-            mask = cv2.inRange(hsv, lower, upper)
+        # 红色掩码
+        lower_red1 = np.array([0, 70, 60])
+        upper_red1 = np.array([20, 255, 255])
+        lower_red2 = np.array([160, 70, 60])
+        upper_red2 = np.array([180, 255, 255])
+        mask_red = cv2.bitwise_or(
+            cv2.inRange(hsv, lower_red1, upper_red1),
+            cv2.inRange(hsv, lower_red2, upper_red2)
+        )
 
-        # 去噪（可选，避免闪烁）
+        # 绿色掩码
+        lower_green = np.array([40, 70, 60])
+        upper_green = np.array([80, 255, 255])
+        mask_green = cv2.inRange(hsv, lower_green, upper_green)
+
+        # 合并掩码（用于去噪）
+        combined_mask = cv2.bitwise_or(mask_red, mask_green)
+
         kernel = np.ones((2, 2), np.uint8)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+        combined_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_CLOSE, kernel)
+        combined_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_OPEN, kernel)
 
-        h, w = mask.shape
-        colored_rows = np.where(np.any(mask > 0, axis=1))[0]
+        h, w = combined_mask.shape
+        colored_rows = np.where(np.any(combined_mask > 0, axis=1))[0]
 
         if len(colored_rows) == 0:
             return 0.0
 
-        # ✅ 关键修正：找最顶部的有色行（最小 y）
-        top_most_colored_row = np.min(colored_rows)  # y 值最小，位置最高
-        filled_height = h - top_most_colored_row  # 从该行到底部的高度
+        top_most_colored_row = np.min(colored_rows)
+        filled_height = h - top_most_colored_row
         percentage = (filled_height / h) * 100
-
         return max(0.0, min(100.0, percentage))
+
+    def is_valid_bar(self, img):
+        """判断图像是否包含有效的红或绿血条"""
+        hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
+
+        mask_red1 = cv2.inRange(hsv, np.array([0, 50, 40]), np.array([25, 255, 255]))
+        mask_red2 = cv2.inRange(hsv, np.array([150, 50, 40]), np.array([180, 255, 255]))
+        mask_red = cv2.bitwise_or(mask_red1, mask_red2)
+
+        mask_green = cv2.inRange(hsv, np.array([40, 50, 40]), np.array([80, 255, 255]))
+
+        combined = cv2.bitwise_or(mask_red, mask_green)
+        total = combined.size
+        colored = cv2.countNonZero(combined)
+        return (colored / total) > 0.1
 
     # ========== 主监控循环 ==========
     def monitor_loop(self):
@@ -254,52 +269,46 @@ class Poe2AutoPotionV7_3:
 
                 screen = np.array(ImageGrab.grab())
 
-                # HP
+                # HP（自动支持红/绿）
                 if self.hp_region:
                     x, y, w, h = self.hp_region
                     if x + w <= screen.shape[1] and y + h <= screen.shape[0]:
                         hp_img = screen[y:y + h, x:x + w]
-                        current_hp_val = self.calculate_percentage_from_strip(hp_img, 'red')
-
-                        # 增加前置检查
-                        if not self.is_valid_bar(hp_img, 'red'):
-                            self.current_hp.set("--%")
-                            current_hp_val = None  # 标记为无效状态
+                        if self.is_valid_bar(hp_img):
+                            current_hp_val = self.calculate_percentage_from_strip(hp_img)
+                            self.current_hp.set(f"{current_hp_val:.1f}%")
                         else:
-                            self.current_hp.set(f"{current_hp_val:.1f}%" if current_hp_val is not None else "??%")
+                            self.current_hp.set("--%")
+                            current_hp_val = None
                     else:
                         self.current_hp.set("--%")
                 else:
                     self.current_hp.set("--%")
 
-                # MP
+                # MP（仅蓝色）
                 if self.mp_region:
                     x, y, w, h = self.mp_region
                     if x + w <= screen.shape[1] and y + h <= screen.shape[0]:
                         mp_img = screen[y:y + h, x:x + w]
-                        current_mp_val = self.calculate_percentage_from_strip(mp_img, 'blue')
-
-                        # 增加前置检查
-                        if not self.is_valid_bar(mp_img, 'blue'):
-                            self.current_mp.set("--%")
-                            current_mp_val = None  # 标记为无效状态
+                        if self.is_valid_bar_blue(mp_img):
+                            current_mp_val = self.calculate_percentage_from_strip_blue(mp_img)
+                            self.current_mp.set(f"{current_mp_val:.1f}%")
                         else:
-                            self.current_mp.set(f"{current_mp_val:.1f}%" if current_mp_val is not None else "??%")
+                            self.current_mp.set("--%")
+                            current_mp_val = None
                     else:
                         self.current_mp.set("--%")
                 else:
                     self.current_mp.set("--%")
 
-                # 只有在识别到有效血条/蓝条时才进行喝药逻辑
-                if current_hp_val is not None:
-                    if not self.disable_hp.get() and current_hp_val < self.hp_threshold.get():
-                        pyautogui.press(self.hp_key.get())
-                        self.log(f"🩸 HP {current_hp_val:.1f}% → 按 '{self.hp_key.get()}'")
+                # 喝药逻辑
+                if current_hp_val is not None and not self.disable_hp.get() and current_hp_val < self.hp_threshold.get():
+                    pyautogui.press(self.hp_key.get())
+                    self.log(f"🩸 HP {current_hp_val:.1f}% → 按 '{self.hp_key.get()}'")
 
-                if current_mp_val is not None:
-                    if not self.disable_mp.get() and current_mp_val < self.mp_threshold.get():
-                        pyautogui.press(self.mp_key.get())
-                        self.log(f"💧 MP {current_mp_val:.1f}% → 按 '{self.mp_key.get()}'")
+                if current_mp_val is not None and not self.disable_mp.get() and current_mp_val < self.mp_threshold.get():
+                    pyautogui.press(self.mp_key.get())
+                    self.log(f"💧 MP {current_mp_val:.1f}% → 按 '{self.mp_key.get()}'")
 
                 # 定时喝药
                 if current_hp_val is not None and not self.disable_hp.get() and self.enable_hp_timer.get():
@@ -320,35 +329,31 @@ class Poe2AutoPotionV7_3:
                 self.log(f"⚠️ 异常: {e}")
                 time.sleep(1)
 
-    # 新增函数用于验证是否是有效的血条/蓝条区域
-    def is_valid_bar(self, img, color='red'):
-        """
-        判断给定的图像是否包含足够的有效颜色区域
-        :param img: 输入的RGB图像
-        :param color: 需要判断的颜色类型 ('red' 或 'blue')
-        :return: True 表示有效；False 表示无效
-        """
+    # 蓝条专用函数（保持原逻辑）
+    def calculate_percentage_from_strip_blue(self, img):
+        if img.size == 0 or img.shape[0] < 10 or img.shape[1] < 3:
+            return None
         hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
+        lower = np.array([90, 70, 60])
+        upper = np.array([140, 255, 255])
+        mask = cv2.inRange(hsv, lower, upper)
+        kernel = np.ones((2, 2), np.uint8)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+        h, w = mask.shape
+        colored_rows = np.where(np.any(mask > 0, axis=1))[0]
+        if len(colored_rows) == 0:
+            return 0.0
+        top_most = np.min(colored_rows)
+        filled = h - top_most
+        return max(0.0, min(100.0, (filled / h) * 100))
 
-        if color == 'red':
-            lower1 = np.array([0, 50, 40])
-            upper1 = np.array([25, 255, 255])
-            lower2 = np.array([150, 50, 40])
-            upper2 = np.array([180, 255, 255])
-            mask = cv2.bitwise_or(
-                cv2.inRange(hsv, lower1, upper1),
-                cv2.inRange(hsv, lower2, upper2)
-            )
-        else:  # blue
-            lower = np.array([80, 50, 40])
-            upper = np.array([150, 255, 255])
-            mask = cv2.inRange(hsv, lower, upper)
-
-        total_pixels = mask.size
-        colored_pixels = cv2.countNonZero(mask)
-
-        # 如果有效颜色像素占比低于一定比例（如10%），则认为不是有效的血条/蓝条区域
-        return (colored_pixels / total_pixels) > 0.1
+    def is_valid_bar_blue(self, img):
+        hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
+        mask = cv2.inRange(hsv, np.array([80, 50, 40]), np.array([150, 255, 255]))
+        total = mask.size
+        colored = cv2.countNonZero(mask)
+        return (colored / total) > 0.1
 
     def start_monitoring(self):
         if not self.hp_region and not self.mp_region:
@@ -406,7 +411,6 @@ class Poe2AutoPotionV7_3:
 
         self.check_interval.set(cfg.get("check_interval", 0.3))
 
-        # 更新 UI 显示
         if self.hp_region:
             x, y, w, h = self.hp_region
             self.hp_region_label.config(text=f"({x},{y}) {w}x{h}")
