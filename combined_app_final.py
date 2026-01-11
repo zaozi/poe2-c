@@ -241,7 +241,13 @@ class CombinedApp:
 
         # 创建cEquipment界面
         frame = ttk.Frame(self.turbo_tab, padding="12")
-        frame.grid(row=0, column=0, sticky=(tk.W, tk.E))
+        frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+
+        # 配置行列权重，使框架可以扩展
+        self.turbo_tab.columnconfigure(0, weight=1)
+        self.turbo_tab.rowconfigure(0, weight=1)
+        frame.columnconfigure(0, weight=1)
+        frame.rowconfigure(16, weight=1)  # 假设日志区域在第16行
 
         coords = [("洗练石:", self.orb_pos, "orb"), ("装备:", self.equip_pos, "equip"), ("属性区域:", self.mod_region, "mod")]
         for i, (label, var, key) in enumerate(coords):
@@ -310,7 +316,15 @@ class CombinedApp:
             text="🚀 开始极速洗练（主词条+T阶图标匹配）",
             command=self.start_reforge
         )
-        self.start_btn.grid(row=row, column=0, columnspan=3, pady=20, ipadx=15, ipady=6)
+        self.start_btn.grid(row=row, column=0, columnspan=3, pady=10, ipadx=15, ipady=6)
+
+        # 添加洗练日志区域
+        row += 1
+        log_frame = ttk.LabelFrame(frame, text="📋 洗练日志", padding=5)
+        log_frame.grid(row=row, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), pady=10, padx=5)
+
+        self.reforge_log_text = scrolledtext.ScrolledText(log_frame, height=8, state=tk.DISABLED, wrap=tk.WORD)
+        self.reforge_log_text.pack(fill=tk.BOTH, expand=True)
 
     def create_weizhi_tab(self):
         """创建weizhi功能选项卡"""
@@ -321,27 +335,40 @@ class CombinedApp:
         control_frame = ttk.Frame(self.weizhi_tab, padding="10")
         control_frame.pack(side=tk.TOP, fill=tk.X)
 
-        ttk.Button(control_frame, text="选择截图", command=self.load_screenshot).pack(side=tk.LEFT, padx=5)
-        ttk.Button(control_frame, text="选择主词条模板", command=self.load_template_main).pack(side=tk.LEFT, padx=5)
-        ttk.Button(control_frame, text="选择T阶图标模板", command=self.load_template_tier).pack(side=tk.LEFT, padx=5)
+        # 第一行：按钮
+        button_frame = ttk.Frame(control_frame)
+        button_frame.pack(fill=tk.X, pady=(0, 10))
+        ttk.Button(button_frame, text="选择截图", command=self.load_screenshot).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="选择主词条模板", command=self.load_template_main).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="选择T阶图标模板", command=self.load_template_tier).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="🔍 开始匹配", command=self.run_matching).pack(side=tk.RIGHT, padx=5)
 
-        ttk.Label(control_frame, text="主词条阈值:").pack(side=tk.LEFT, padx=(20,5))
-        ttk.Scale(control_frame, from_=0.7, to=0.98, variable=self.weizhi_main_thresh, orient=tk.HORIZONTAL, length=120).pack(side=tk.LEFT)
-        ttk.Label(control_frame, textvariable=self.weizhi_main_thresh, width=5).pack(side=tk.LEFT, padx=(5,15))
+        # 第二行：阈值设置
+        thresh_frame = ttk.Frame(control_frame)
+        thresh_frame.pack(fill=tk.X)
 
-        ttk.Label(control_frame, text="T阶图标阈值:").pack(side=tk.LEFT)
-        ttk.Scale(control_frame, from_=0.8, to=0.99, variable=self.weizhi_tier_thresh, orient=tk.HORIZONTAL, length=120).pack(side=tk.LEFT)
-        ttk.Label(control_frame, textvariable=self.weizhi_tier_thresh, width=5).pack(side=tk.LEFT, padx=(5,15))
+        main_thresh_frame = ttk.Frame(thresh_frame)
+        main_thresh_frame.pack(side=tk.LEFT, padx=(0, 20))
+        ttk.Label(main_thresh_frame, text="主词条阈值:").pack(side=tk.LEFT)
+        ttk.Scale(main_thresh_frame, from_=0.7, to=0.98, variable=self.weizhi_main_thresh, orient=tk.HORIZONTAL, length=120).pack(side=tk.LEFT, padx=5)
+        ttk.Label(main_thresh_frame, textvariable=self.weizhi_main_thresh, width=5).pack(side=tk.LEFT)
 
-        ttk.Button(control_frame, text="🔍 开始匹配", command=self.run_matching).pack(side=tk.LEFT, padx=(20,0))
-
-        # === 日志区 ===
-        self.result_text = tk.Text(self.weizhi_tab, height=4, state='disabled', bg='#f0f0f0')
-        self.result_text.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=(0,10))
+        tier_thresh_frame = ttk.Frame(thresh_frame)
+        tier_thresh_frame.pack(side=tk.LEFT)
+        ttk.Label(tier_thresh_frame, text="T阶图标阈值:").pack(side=tk.LEFT)
+        ttk.Scale(tier_thresh_frame, from_=0.8, to=0.99, variable=self.weizhi_tier_thresh, orient=tk.HORIZONTAL, length=120).pack(side=tk.LEFT, padx=5)
+        ttk.Label(tier_thresh_frame, textvariable=self.weizhi_tier_thresh, width=5).pack(side=tk.LEFT)
 
         # === 三视图区 ===
         paned = ttk.PanedWindow(self.weizhi_tab, orient=tk.HORIZONTAL)
         paned.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # === 日志区 ===
+        log_frame = ttk.LabelFrame(self.weizhi_tab, text="📋 匹配日志", padding=5)
+        log_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=(0,10))
+
+        self.result_text = scrolledtext.ScrolledText(log_frame, height=6, state='disabled', bg='#f0f0f0', wrap=tk.WORD)
+        self.result_text.pack(fill=tk.BOTH, expand=True)
 
         frame1 = ttk.LabelFrame(paned, text="1. 原始图像")
         paned.add(frame1, weight=1)
@@ -825,7 +852,7 @@ class CombinedApp:
 
     def match_main_and_get_template(self, screen_gray, templates_with_path, threshold, attempt_num):
         """匹配主词条并获取最佳模板"""
-        print(f"\n🔄 第 {attempt_num} 次洗练 - 主词条匹配:")
+        self.reforge_log(f"\n🔄 第 {attempt_num} 次洗练 - 主词条匹配:")
         best_score = -1
         best_template = None
         best_path = None
@@ -834,19 +861,19 @@ class CombinedApp:
             h_tpl, w_tpl = template.shape[:2]
             h_scr, w_scr = screen_gray.shape
             if h_tpl > h_scr or w_tpl > w_scr:
-                print(f" ❌ 模板 {os.path.basename(path)}: 尺寸过大（跳过）")
+                self.reforge_log(f" ❌ 模板 {os.path.basename(path)}: 尺寸过大（跳过）")
                 continue
             res = cv2.matchTemplate(screen_gray, template, cv2.TM_CCOEFF_NORMED)
             _, max_val, _, max_loc = cv2.minMaxLoc(res)
             status = "✅" if max_val >= threshold else "❌"
-            print(f" 🔍 {os.path.basename(path)}: 得分={max_val:.4f} → {status}")
+            self.reforge_log(f" 🔍 {os.path.basename(path)}: 得分={max_val:.4f} → {status}")
             if max_val >= threshold and max_val > best_score:
                 best_score = max_val
                 best_template = template
                 best_path = path
                 best_loc = max_loc
         if best_template is not None:
-            print(f" 🎯 主词条匹配成功！模板: {os.path.basename(best_path)} | 得分={best_score:.4f} | 位置={best_loc}")
+            self.reforge_log(f" 🎯 主词条匹配成功！模板: {os.path.basename(best_path)} | 得分={best_score:.4f} | 位置={best_loc}")
             return True, best_template, best_path, best_loc, best_score
         return False, None, None, None, -1
 
@@ -911,11 +938,11 @@ class CombinedApp:
 
     def run_reforge(self, config):
         """运行洗练"""
-        print("\n" + "="*70)
-        print("⚡ 极速洗练启动（主词条 + 右侧T阶图标匹配 | 整行搜索）")
-        print("🛑 按 F12 可随时中断洗练（返回主界面）")
-        print("="*70)
-        time.sleep(0.5)
+        self.reforge_log("\n" + "="*70)
+        self.reforge_log("⚡ 极速洗练启动（主词条 + 右侧T阶图标匹配 | 整行搜索）")
+        self.reforge_log("🛑 按 F12 可随时中断洗练（返回主界面）")
+        self.reforge_log("="*70)
+        time.sleep(0.1)  # 减少初始延迟
 
         # 加载主词条模板
         main_templates_with_path = [
@@ -947,20 +974,23 @@ class CombinedApp:
         try:
             while attempt < max_attempts:
                 if keyboard and keyboard.is_pressed('f12'):
-                    print("\n⏸️ 用户按下 F12，洗练已中断。")
+                    self.reforge_log("\n⏸️ 用户按下 F12，洗练已中断。")
                     break
 
                 attempt += 1
-                pyautogui.moveTo(equip_x, equip_y, duration=0.03)
+                # 减少鼠标移动时间，提高速度
+                pyautogui.moveTo(equip_x, equip_y, duration=0.01)
                 pyautogui.click()
-                time.sleep(equip_click_delay)
+                # 减少点击后延迟，但保留最小值以确保游戏响应
+                time.sleep(max(equip_click_delay * 0.7, 0.1))
 
                 pyautogui.keyDown('alt')
                 raw_screenshot = pyautogui.screenshot(region=(x, y, w, h))
                 pyautogui.keyUp('alt')
 
-                raw_img_bgr = cv2.cvtColor(np.array(raw_screenshot), cv2.COLOR_RGB2BGR)
-                screen_gray = self.preprocess_image(raw_img_bgr)
+                # 直接转换为灰度图像，跳过BGR转换步骤
+                raw_img_gray = cv2.cvtColor(np.array(raw_screenshot), cv2.COLOR_RGB2GRAY)
+                screen_gray = self.preprocess_image(raw_img_gray)
 
                 # === 第1步：主词条匹配 ===
                 main_matched, matched_main_tpl, matched_main_path, match_loc, score = self.match_main_and_get_template(
@@ -986,28 +1016,28 @@ class CombinedApp:
                         search_region = screen_gray[search_y_start:search_y_end, search_x_start:search_x_end]
                         res_tier = cv2.matchTemplate(search_region, tier_template, cv2.TM_CCOEFF_NORMED)
                         _, max_val_tier, _, _ = cv2.minMaxLoc(res_tier)
-                        print(f" 🔍 T阶图标匹配得分: {max_val_tier:.4f} | 阈值: {tier_thresh:.2f}")
+                        self.reforge_log(f" 🔍 T阶图标匹配得分: {max_val_tier:.4f} | 阈值: {tier_thresh:.2f}")
                         tier_matched = max_val_tier >= tier_thresh
                     else:
-                        print(" ⚠️ T阶模板大于右侧可用区域")
+                        self.reforge_log(" ⚠️ T阶模板大于右侧可用区域")
                 else:
-                    print(" ⚠️ 主词条右侧无有效搜索区域")
+                    self.reforge_log(" ⚠️ 主词条右侧无有效搜索区域")
 
                 if tier_matched:
-                    print(" ✅ 主词条 + T阶图标均匹配成功！洗练成功！")
+                    self.reforge_log(" ✅ 主词条 + T阶图标均匹配成功！洗练成功！")
                     success = True
                     break
                 else:
-                    print(" ⚠️ T阶图标未匹配，跳过本次结果")
+                    self.reforge_log(" ⚠️ T阶图标未匹配，跳过本次结果")
 
-                time.sleep(0.01)
+                time.sleep(0.001)  # 大幅减少循环延迟
 
         finally:
             pyautogui.keyUp('shift')
 
         result = "成功" if success else "已中断" if (keyboard and keyboard.is_pressed('f12')) else "已达上限"
         msg = f"{result}！共 {attempt} 次。"
-        print(f"\n🏁 {msg}")
+        self.reforge_log(f"\n🏁 {msg}")
         messagebox.showinfo("洗练结束", msg)
 
     # === weizhi功能相关方法 ===
@@ -1073,9 +1103,34 @@ class CombinedApp:
             img_display = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
         h, w = img_display.shape[:2]
+
+        # 获取画布尺寸
+        canvas.update()
+        canvas_w = canvas.winfo_width()
+        canvas_h = canvas.winfo_height()
+
+        # 如果画布尺寸无效（还未渲染），使用默认值
+        if canvas_w <= 1:
+            canvas_w = 300
+        if canvas_h <= 1:
+            canvas_h = 200
+
+        # 计算缩放比例，确保图像适应画布
+        scale = 1.0
         if max_h and h > max_h:
             scale = max_h / h
-            new_w, new_h = int(w * scale), max_h
+
+        # 如果图像宽度超过画布宽度，进一步缩放
+        if w * scale > canvas_w:
+            scale = canvas_w / w
+
+        # 如果图像高度超过画布高度，进一步缩放
+        if h * scale > canvas_h:
+            scale = canvas_h / h
+
+        # 应用缩放
+        if scale < 1.0:
+            new_w, new_h = int(w * scale), int(h * scale)
             img_resized = cv2.resize(img_display, (new_w, new_h), interpolation=cv2.INTER_AREA)
         else:
             img_resized = img_display
@@ -1233,6 +1288,16 @@ class CombinedApp:
 
         # 关闭窗口
         self.root.destroy()
+
+    def reforge_log(self, msg):
+        """添加洗练日志消息"""
+        # 同时输出到控制台和UI
+        print(msg)
+        if hasattr(self, 'reforge_log_text') and self.reforge_log_text.winfo_exists():
+            self.reforge_log_text.config(state=tk.NORMAL)
+            self.reforge_log_text.insert(tk.END, f"[{time.strftime('%H:%M:%S')}] {msg}\n")
+            self.reforge_log_text.see(tk.END)
+            self.reforge_log_text.config(state=tk.DISABLED)
 
     def run(self):
         """运行应用"""
