@@ -10,6 +10,48 @@ from PIL import ImageGrab, Image, ImageTk
 import json
 import os
 import sys
+import datetime
+
+# 缓存相关常量
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+CACHE_DIR = os.path.join(SCRIPT_DIR, "equipment_cache")
+MAX_CACHE_SIZE = 10  # 最多保留10次缓存
+
+def save_to_cache(image, prefix="equip"):
+    """保存图片到缓存文件夹，并维护最近10次缓存"""
+    print(f"[DEBUG] save_to_cache called with prefix={prefix}, image shape={image.shape if hasattr(image, 'shape') else 'N/A'}")
+    
+    # 确保缓存目录存在
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    print(f"[DEBUG] Cache directory: {CACHE_DIR}")
+    
+    # 生成带时间戳的文件名
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    filename = f"{prefix}_{timestamp}.png"
+    filepath = os.path.join(CACHE_DIR, filename)
+    print(f"[DEBUG] Saving to: {filepath}")
+    
+    # 保存图片
+    result = cv2.imwrite(filepath, image)
+    print(f"[DEBUG] cv2.imwrite result: {result}")
+    
+    # 获取缓存目录中的所有文件
+    cache_files = sorted(
+        [f for f in os.listdir(CACHE_DIR) if f.startswith(prefix) and f.endswith(".png")],
+        key=lambda x: os.path.getmtime(os.path.join(CACHE_DIR, x))
+    )
+    
+    # 如果超过最大缓存数量，删除最旧的文件
+    while len(cache_files) > MAX_CACHE_SIZE:
+        oldest_file = cache_files.pop(0)
+        oldest_path = os.path.join(CACHE_DIR, oldest_file)
+        try:
+            os.remove(oldest_path)
+            print(f"🗑️ 已删除旧缓存: {oldest_file}")
+        except Exception as e:
+            print(f"⚠️ 删除缓存文件失败: {e}")
+    
+    return filepath
 
 # 导入keyboard和pynput库，如果不存在则提示安装
 try:
@@ -972,12 +1014,14 @@ class CombinedApp:
         attempt = 0
 
         try:
+            print(f"[DEBUG] 开始洗练循环，最大尝试次数: {max_attempts}")
             while attempt < max_attempts:
                 if keyboard and keyboard.is_pressed('f12'):
                     self.reforge_log("\n⏸️ 用户按下 F12，洗练已中断。")
                     break
 
                 attempt += 1
+                print(f"[DEBUG] 第 {attempt} 次尝试")
                 # 减少鼠标移动时间，提高速度
                 pyautogui.moveTo(equip_x, equip_y, duration=0.01)
                 pyautogui.click()
@@ -988,6 +1032,8 @@ class CombinedApp:
                 raw_screenshot = pyautogui.screenshot(region=(x, y, w, h))
                 pyautogui.keyUp('alt')
 
+                # 保存原始截图为numpy数组（BGR格式）
+                raw_img_bgr = cv2.cvtColor(np.array(raw_screenshot), cv2.COLOR_RGB2BGR)
                 # 直接转换为灰度图像，跳过BGR转换步骤
                 raw_img_gray = cv2.cvtColor(np.array(raw_screenshot), cv2.COLOR_RGB2GRAY)
                 screen_gray = self.preprocess_image(raw_img_gray)
@@ -997,19 +1043,43 @@ class CombinedApp:
                     screen_gray, main_templates_with_path, main_thresh, attempt
                 )
 
+                print(f"[DEBUG] 主词条匹配结果: {main_matched}")
                 if not main_matched:
-                    continue
-
+                    # 初始化变量，避免后续代码出错
+                    matched_main_tpl = None
+                    match_loc = (0, 0)
+                    score = 0.0
+                
                 # === 第2步：在右侧整行区域匹配T阶图标 ===
-                h_scr, w_scr = screen_gray.shape
-                h_main, w_main = matched_main_tpl.shape
-                x_main, y_main = match_loc
+                # 只有主词条匹配成功才进行T阶匹配
+                tier_matched = False
+                max_val_tier = 0.0
+                search_x_start = 0
+                search_y_start = 0
 
-                search_x_start = x_main + w_main
+                # 初始化屏幕尺寸变量，避免后续引用未定义变量
+                h_scr, w_scr = screen_gray.shape
+
+                # 初始化主词条相关变量，避免后续引用未定义变量
+                h_main, w_main = 0, 0
+                x_main, y_main = 0, 0
+
+                if main_matched:
+                    print(f"[DEBUG] 主词条匹配成功，准备进行T阶匹配")
+                    h_main, w_main = matched_main_tpl.shape
+                    x_main, y_main = match_loc
+                else:
+                    print(f"[DEBUG] 主词条未匹配，跳过T阶匹配")
+
+                if main_matched:
+                    search_x_start = x_main + w_main
                 search_x_end = w_scr
                 search_y_start = y_main
                 search_y_end = y_main + h_main
 
+                print(f"[DEBUG] T阶匹配区域: search_x_start={search_x_start}, search_x_end={search_x_end}, search_y_start={search_y_start}, search_y_end={search_y_end}")
+                print(f"[DEBUG] T阶模板尺寸: h_tier={h_tier}, w_tier={w_tier}")
+                
                 tier_matched = False
                 if search_x_start < search_x_end and search_y_end <= h_scr:
                     if h_tier <= (search_y_end - search_y_start) and w_tier <= (search_x_end - search_x_start):
@@ -1017,12 +1087,50 @@ class CombinedApp:
                         res_tier = cv2.matchTemplate(search_region, tier_template, cv2.TM_CCOEFF_NORMED)
                         _, max_val_tier, _, _ = cv2.minMaxLoc(res_tier)
                         self.reforge_log(f" 🔍 T阶图标匹配得分: {max_val_tier:.4f} | 阈值: {tier_thresh:.2f}")
+                        print(f"[DEBUG] T阶匹配得分: {max_val_tier:.4f}, 阈值: {tier_thresh:.2f}")
                         tier_matched = max_val_tier >= tier_thresh
+                        print(f"[DEBUG] T阶匹配结果: {tier_matched}")
                     else:
                         self.reforge_log(" ⚠️ T阶模板大于右侧可用区域")
+                        print(f"[DEBUG] T阶模板大于右侧可用区域")
                 else:
                     self.reforge_log(" ⚠️ 主词条右侧无有效搜索区域")
+                    print(f"[DEBUG] 主词条右侧无有效搜索区域")
 
+                # 在图片上标记识别结果
+                result_img = raw_img_bgr.copy()
+                
+                # 标记主词条匹配结果
+                if main_matched:
+                    # 在主词条位置画绿色矩形框
+                    cv2.rectangle(result_img, match_loc, 
+                                 (match_loc[0] + matched_main_tpl.shape[1], match_loc[1] + matched_main_tpl.shape[0]),
+                                 (0, 255, 0), 2)
+                    # 添加主词条得分文本
+                    cv2.putText(result_img, f"Main: {score:.2f}", 
+                              (match_loc[0], match_loc[1] - 10),
+                              cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+                
+                # 标记T阶匹配结果（不管成功还是失败都显示）
+                if main_matched:  # 只有主词条匹配成功才显示T阶结果
+                    # 根据匹配结果选择颜色：成功用绿色，失败用红色
+                    color = (0, 255, 0) if tier_matched else (0, 0, 255)
+                    # 在T阶位置画矩形框
+                    cv2.rectangle(result_img, (search_x_start, search_y_start),
+                                 (search_x_start + w_tier, search_y_start + h_tier),
+                                 color, 2)
+                    # 添加T阶得分文本
+                    cv2.putText(result_img, f"Tier: {max_val_tier:.2f}",
+                              (search_x_start, search_y_start - 10),
+                              cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+                
+                # 保存带识别结果的图片
+                try:
+                    cache_path = save_to_cache(result_img, prefix="equip_mods")
+                    print(f"[DEBUG] 装备词条已缓存到: {cache_path}")
+                except Exception as e:
+                    print(f"[DEBUG] 缓存保存失败: {e}")
+                
                 if tier_matched:
                     self.reforge_log(" ✅ 主词条 + T阶图标均匹配成功！洗练成功！")
                     success = True
